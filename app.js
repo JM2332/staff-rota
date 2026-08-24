@@ -145,6 +145,39 @@ auth.onAuthStateChanged(user => {
   }
 });
 
+// ---------- change passcode ----------
+
+document.getElementById('change-passcode-btn').addEventListener('click', () => {
+  document.getElementById('passcode-role-label').textContent = roleLabel(currentRole);
+  document.getElementById('passcode-new').value = '';
+  document.getElementById('passcode-confirm').value = '';
+  document.getElementById('passcode-error').textContent = '';
+  openOverlay('passcode-overlay');
+});
+
+document.getElementById('passcode-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errEl = document.getElementById('passcode-error');
+  errEl.textContent = '';
+  const a = document.getElementById('passcode-new').value;
+  const b = document.getElementById('passcode-confirm').value;
+  if (a !== b) { errEl.textContent = "Passcodes don't match."; return; }
+  const btn = document.querySelector('#passcode-form button[type=submit]');
+  btn.disabled = true;
+  try {
+    await auth.currentUser.updatePassword(a);
+    closeOverlayEl('passcode-overlay');
+  } catch (err) {
+    if (err.code === 'auth/requires-recent-login') {
+      errEl.textContent = "For security this needs a fresh login. Please log out and back in with the current passcode, then try again straight away.";
+    } else {
+      errEl.textContent = 'Could not update passcode: ' + err.message;
+    }
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ---------- overlays ----------
 
 function openOverlay(id) { document.getElementById(id).classList.remove('hidden'); }
