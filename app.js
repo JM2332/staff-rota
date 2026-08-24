@@ -16,11 +16,10 @@ const MANAGER_EMAIL = 'manager@kmlfoodservice.internal';
 const ADMIN_EMAIL = 'jacob@kmlfoodservice.internal';
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-// EmailJS - fill these in once the free account at emailjs.com is set up.
-// Publish notifications are silently skipped (console-warned) until then.
-const EMAILJS_SERVICE_ID = '';
-const EMAILJS_TEMPLATE_ID = '';
-const EMAILJS_PUBLIC_KEY = '';
+// EmailJS - sends the publish notification, no backend required.
+const EMAILJS_SERVICE_ID = 'service_lm99z1l';
+const EMAILJS_TEMPLATE_ID = 'template_lq218u5';
+const EMAILJS_PUBLIC_KEY = 'qgSt4-ksJSzM_C3Bp';
 const NOTIFY_EMAILS = ['jakemawby23@gmail.com', 'oliver@kmlfoodservice.com'];
 const APP_URL = 'https://jm2332.github.io/staff-rota/';
 if (EMAILJS_PUBLIC_KEY) emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
