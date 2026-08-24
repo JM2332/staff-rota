@@ -395,33 +395,28 @@ function renderWeekHeader() {
         </div>
       </div>
       <div class="week-detail-actions">
+        ${(!w.shiftCount && weeksById.has(addDays(w.weekStart, -7))) ? '<button id="copy-prev-week-btn" class="btn-outline"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-1"/><path d="M9 15h9a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2z"/></svg>Copy from previous week</button>' : ''}
         ${w.status !== 'published' ? '<button id="publish-week-btn" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Publish rota</button>' : ''}
       </div>
     </div>
+    <div id="week-warnings"></div>
     <div id="week-photo-strip"></div>
     <div id="week-grid-wrap"></div>
     <div id="week-amend-wrap" class="amend-section"></div>
   `;
-  // Only replace header/actions on first render or status change; grid/photos/amends render separately into their containers.
-  if (!el.dataset.weekId || el.dataset.weekId !== currentWeekId) {
-    el.dataset.weekId = currentWeekId;
-    el.innerHTML = headerHtml;
-    wireWeekHeaderActions();
-    renderRotaGrid();
-    renderPhotoStrip();
-    renderAmendments();
-  } else {
-    const header = el.querySelector('.week-detail-header');
-    if (header) {
-      header.outerHTML = headerHtml.match(/<div class="week-detail-header">[\s\S]*?<\/div>\s*<\/div>/)[0];
-      wireWeekHeaderActions();
-    }
-  }
+  el.dataset.weekId = currentWeekId;
+  el.innerHTML = headerHtml;
+  wireWeekHeaderActions();
+  renderRotaGrid();
+  renderPhotoStrip();
+  renderAmendments();
 }
 
 function wireWeekHeaderActions() {
   const btn = document.getElementById('publish-week-btn');
   if (btn) btn.addEventListener('click', publishWeek);
+  const copyBtn = document.getElementById('copy-prev-week-btn');
+  if (copyBtn) copyBtn.addEventListener('click', copyFromPreviousWeek);
 }
 
 async function publishWeek() {
@@ -430,6 +425,42 @@ async function publishWeek() {
     publishedAt: firebase.firestore.FieldValue.serverTimestamp(),
     publishedByRole: currentRole,
   });
+}
+
+async function copyFromPreviousWeek() {
+  const w = weeksById.get(currentWeekId);
+  if (!w) return;
+  const prevWeekId = addDays(w.weekStart, -7);
+  const prevWeek = weeksById.get(prevWeekId);
+  if (!prevWeek) return;
+  if (!confirm(`Copy all shifts from the week of ${fmtRange(prevWeekId)} into this week?`)) return;
+
+  const btn = document.getElementById('copy-prev-week-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const prevShiftsSnap = await db.collection('weeks').doc(prevWeekId).collection('shifts').get();
+    if (prevShiftsSnap.empty) return;
+    const weekRef = db.collection('weeks').doc(currentWeekId);
+    const batch = db.batch();
+    prevShiftsSnap.docs.forEach(doc => {
+      const s = doc.data();
+      const newRef = weekRef.collection('shifts').doc();
+      batch.set(newRef, {
+        driverId: s.driverId,
+        date: addDays(s.date, 7),
+        off: !!s.off,
+        start: s.off ? null : (s.start || null),
+        end: s.off ? null : (s.end || null),
+        note: s.note || '',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedByRole: currentRole,
+      });
+    });
+    batch.update(weekRef, { shiftCount: firebase.firestore.FieldValue.increment(prevShiftsSnap.size) });
+    await batch.commit();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ---------- rota grid ----------
@@ -449,11 +480,15 @@ function renderRotaGrid() {
   }
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const activeDrivers = drivers.filter(d => d.active);
+  const noCoverageDays = activeDrivers.length
+    ? new Set(days.filter(d => !currentShifts.some(s => s.date === d && !s.off)))
+    : new Set();
 
   let html = '<div class="rota-grid-wrap"><div class="rota-grid">';
   html += '<div class="rota-head"><div class="rota-driver-cell">Driver</div>';
   days.forEach((d, i) => {
-    html += `<div class="rota-day-cell"><div class="rota-day-name">${DAY_LABELS[i]}</div><div class="rota-day-date">${fmtDateShort(d)}</div></div>`;
+    html += `<div class="rota-day-cell${noCoverageDays.has(d) ? ' warn-day' : ''}"><div class="rota-day-name">${DAY_LABELS[i]}</div><div class="rota-day-date">${fmtDateShort(d)}</div></div>`;
   });
   html += '</div>';
 
@@ -480,6 +515,39 @@ function renderRotaGrid() {
   wrap.querySelectorAll('[data-add-driver]').forEach(btn => {
     btn.addEventListener('click', () => openShiftModal(null, btn.dataset.addDriver, btn.dataset.addDate));
   });
+
+  renderCoverageWarnings();
+}
+
+function computeCoverageWarnings() {
+  const w = weeksById.get(currentWeekId);
+  if (!w) return [];
+  const activeDrivers = drivers.filter(d => d.active);
+  if (!activeDrivers.length) return [];
+  const days = Array.from({ length: 7 }, (_, i) => addDays(w.weekStart, i));
+  const warnings = [];
+  days.forEach(dayStr => {
+    const dayShifts = currentShifts.filter(s => s.date === dayStr && !s.off);
+    if (!dayShifts.length) {
+      warnings.push({ type: 'no-coverage', text: `No driver rostered - ${fmtDayFull(dayStr)}` });
+    }
+    for (let a = 0; a < dayShifts.length; a++) {
+      for (let b = a + 1; b < dayShifts.length; b++) {
+        const s1 = dayShifts[a], s2 = dayShifts[b];
+        if (s1.driverId === s2.driverId && s1.start && s1.end && s2.start && s2.end && s1.start < s2.end && s2.start < s1.end) {
+          warnings.push({ type: 'double-booked', text: `${driverName(s1.driverId)} double-booked - ${fmtDayFull(dayStr)}: ${s1.start}-${s1.end} overlaps ${s2.start}-${s2.end}` });
+        }
+      }
+    }
+  });
+  return warnings;
+}
+
+function renderCoverageWarnings() {
+  const wrap = document.getElementById('week-warnings');
+  if (!wrap) return;
+  const warnings = computeCoverageWarnings();
+  wrap.innerHTML = warnings.map(w => `<div class="alert ${w.type === 'double-booked' ? 'alert-danger' : 'alert-warn'}">${escapeHtml(w.text)}</div>`).join('');
 }
 
 function driverName(id) { const d = drivers.find(x => x.id === id); return d ? d.name : '(unknown driver)'; }

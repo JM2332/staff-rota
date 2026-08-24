@@ -488,6 +488,12 @@ tbody tr:hover { background: var(--bg-hover); }
 .week-detail-sub { font-size: 12px; color: var(--muted); }
 .week-detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+#week-warnings:empty { display: none; }
+#week-warnings { margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; }
+.alert { padding: 8px 12px; border-radius: var(--radius-sm); font-size: 12.5px; font-weight: 500; }
+.alert-warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #edcfa0; }
+.alert-danger { background: var(--danger-bg); color: var(--danger); border: 1px solid #e2b3a2; }
+
 .photo-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
 .photo-thumb {
   width: 72px; height: 72px; border-radius: var(--radius-sm);
@@ -543,6 +549,9 @@ tbody tr:hover { background: var(--bg-hover); }
   padding: 8px;
   text-align: center;
 }
+.rota-head .rota-day-cell.warn-day { background: var(--warn-bg); }
+.rota-head .rota-day-cell.warn-day .rota-day-name,
+.rota-head .rota-day-cell.warn-day .rota-day-date { color: var(--warn); }
 .rota-day-name { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .rota-day-date { font-size: 10px; color: var(--muted); margin-top: 1px; }
 .shift-chip {
