@@ -404,9 +404,11 @@ function renderWeekHeader() {
       </div>
       <div class="week-detail-actions">
         ${(!w.shiftCount && weeksById.has(addDays(w.weekStart, -7))) ? '<button id="copy-prev-week-btn" class="btn-outline"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-1"/><path d="M9 15h9a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2z"/></svg>Copy from previous week</button>' : ''}
-        ${w.status !== 'published' ? '<button id="publish-week-btn" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Publish rota</button>' : ''}
+        ${w.status === 'published' ? '<button id="unpublish-week-btn" class="btn-outline"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v8h8"/></svg>Unpublish (back to Draft)</button>' : '<button id="publish-week-btn" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Publish rota</button>'}
+        <button id="delete-week-btn" class="btn-danger"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete rota</button>
       </div>
     </div>
+    ${w.status === 'published' ? '<p class="field-hint" style="margin-bottom:12px;">Click any shift below to amend it - changes are logged automatically.</p>' : ''}
     <div id="week-warnings"></div>
     <div id="week-photo-strip"></div>
     <div id="week-grid-wrap"></div>
@@ -423,8 +425,12 @@ function renderWeekHeader() {
 function wireWeekHeaderActions() {
   const btn = document.getElementById('publish-week-btn');
   if (btn) btn.addEventListener('click', publishWeek);
+  const unpubBtn = document.getElementById('unpublish-week-btn');
+  if (unpubBtn) unpubBtn.addEventListener('click', unpublishWeek);
   const copyBtn = document.getElementById('copy-prev-week-btn');
   if (copyBtn) copyBtn.addEventListener('click', copyFromPreviousWeek);
+  const deleteBtn = document.getElementById('delete-week-btn');
+  if (deleteBtn) deleteBtn.addEventListener('click', deleteWeek);
 }
 
 async function publishWeek() {
@@ -435,6 +441,40 @@ async function publishWeek() {
     publishedByRole: currentRole,
   });
   sendPublishNotification(w ? w.weekStart : currentWeekId);
+}
+
+async function unpublishWeek() {
+  if (!confirm('Move this rota back to Draft? It stays visible to managers and admins, but no new publish email is sent until you publish it again.')) return;
+  await db.collection('weeks').doc(currentWeekId).update({
+    status: 'draft',
+    publishedAt: firebase.firestore.FieldValue.delete(),
+    publishedByRole: firebase.firestore.FieldValue.delete(),
+  });
+}
+
+async function deleteWeek() {
+  const w = weeksById.get(currentWeekId);
+  if (!w) return;
+  if (!confirm(`Delete the entire rota for ${fmtRange(w.weekStart)}? This removes all shifts, photos, and amendment history for this week. This can't be undone.`)) return;
+  const btn = document.getElementById('delete-week-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const weekRef = db.collection('weeks').doc(currentWeekId);
+    const [shiftsSnap, photosSnap, amendSnap] = await Promise.all([
+      weekRef.collection('shifts').get(),
+      weekRef.collection('photos').get(),
+      weekRef.collection('amendments').get(),
+    ]);
+    const batch = db.batch();
+    shiftsSnap.docs.forEach(d => batch.delete(d.ref));
+    photosSnap.docs.forEach(d => batch.delete(d.ref));
+    amendSnap.docs.forEach(d => batch.delete(d.ref));
+    batch.delete(weekRef);
+    await batch.commit();
+    closeWeekOverlay();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function sendPublishNotification(weekStart) {
