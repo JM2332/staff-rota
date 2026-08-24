@@ -149,27 +149,33 @@ auth.onAuthStateChanged(user => {
 
 document.getElementById('change-passcode-btn').addEventListener('click', () => {
   document.getElementById('passcode-role-label').textContent = roleLabel(currentRole);
+  document.getElementById('passcode-current').value = '';
   document.getElementById('passcode-new').value = '';
   document.getElementById('passcode-confirm').value = '';
   document.getElementById('passcode-error').textContent = '';
   openOverlay('passcode-overlay');
 });
 
+document.getElementById('logout-btn').addEventListener('click', () => auth.signOut());
+
 document.getElementById('passcode-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('passcode-error');
   errEl.textContent = '';
+  const current = document.getElementById('passcode-current').value;
   const a = document.getElementById('passcode-new').value;
   const b = document.getElementById('passcode-confirm').value;
-  if (a !== b) { errEl.textContent = "Passcodes don't match."; return; }
+  if (a !== b) { errEl.textContent = "New passcodes don't match."; return; }
   const btn = document.querySelector('#passcode-form button[type=submit]');
   btn.disabled = true;
   try {
+    const cred = firebase.auth.EmailAuthProvider.credential(auth.currentUser.email, current);
+    await auth.currentUser.reauthenticateWithCredential(cred);
     await auth.currentUser.updatePassword(a);
     closeOverlayEl('passcode-overlay');
   } catch (err) {
-    if (err.code === 'auth/requires-recent-login') {
-      errEl.textContent = "For security this needs a fresh login. Please log out and back in with the current passcode, then try again straight away.";
+    if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential' || err.code === 'auth/invalid-login-credentials') {
+      errEl.textContent = 'Current passcode is incorrect.';
     } else {
       errEl.textContent = 'Could not update passcode: ' + err.message;
     }
