@@ -16,6 +16,15 @@ const MANAGER_EMAIL = 'manager@kmlfoodservice.internal';
 const ADMIN_EMAIL = 'jacob@kmlfoodservice.internal';
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+// EmailJS - fill these in once the free account at emailjs.com is set up.
+// Publish notifications are silently skipped (console-warned) until then.
+const EMAILJS_SERVICE_ID = '';
+const EMAILJS_TEMPLATE_ID = '';
+const EMAILJS_PUBLIC_KEY = '';
+const NOTIFY_EMAILS = ['jakemawby23@gmail.com', 'oliver@kmlfoodservice.com'];
+const APP_URL = 'https://jm2332.github.io/staff-rota/';
+if (EMAILJS_PUBLIC_KEY) emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+
 let selectedLoginRole = 'manager';
 let currentRole = null; // 'manager' | 'admin', set after login
 let booted = false;
@@ -420,10 +429,29 @@ function wireWeekHeaderActions() {
 }
 
 async function publishWeek() {
+  const w = weeksById.get(currentWeekId);
   await db.collection('weeks').doc(currentWeekId).update({
     status: 'published',
     publishedAt: firebase.firestore.FieldValue.serverTimestamp(),
     publishedByRole: currentRole,
+  });
+  sendPublishNotification(w ? w.weekStart : currentWeekId);
+}
+
+function sendPublishNotification(weekStart) {
+  if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
+    console.warn('EmailJS not configured yet - skipping publish notification.');
+    return;
+  }
+  const params = {
+    week_range: fmtRange(weekStart),
+    published_by: roleLabel(currentRole),
+    published_at: new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }),
+    app_url: APP_URL,
+  };
+  NOTIFY_EMAILS.forEach(to => {
+    emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, { ...params, to_email: to })
+      .catch(err => console.error('Publish notification email failed for', to, err));
   });
 }
 
