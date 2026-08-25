@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="KML Rota">
-<link rel="stylesheet" href="style.css?v=202608241400">
+<link rel="stylesheet" href="style.css?v=202608241800">
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
@@ -218,7 +218,10 @@
   </div>
 </div>
 
-<script src="app.js?v=202608241700"></script>
-<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=202608241700');</script>
+<!-- Print area - hidden on screen, shown only by @media print. Populated by printRota(). -->
+<div id="print-area"></div>
+
+<script src="app.js?v=202608241800"></script>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=202608241800');</script>
 </body>
 </html>

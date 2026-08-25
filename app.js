@@ -405,6 +405,7 @@ function renderWeekHeader() {
       <div class="week-detail-actions">
         ${(!w.shiftCount && weeksById.has(addDays(w.weekStart, -7))) ? '<button id="copy-prev-week-btn" class="btn-outline"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-1"/><path d="M9 15h9a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2z"/></svg>Copy from previous week</button>' : ''}
         ${w.status === 'published' ? '<button id="unpublish-week-btn" class="btn-outline"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 4v8h8"/></svg>Unpublish (back to Draft)</button>' : '<button id="publish-week-btn" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Publish rota</button>'}
+        ${w.status === 'published' ? '<button id="print-week-btn" class="btn-outline"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="6" y="14" width="12" height="7"/><path d="M6 18H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2"/></svg>Print</button>' : ''}
         <button id="delete-week-btn" class="btn-danger"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete rota</button>
       </div>
     </div>
@@ -431,6 +432,8 @@ function wireWeekHeaderActions() {
   if (copyBtn) copyBtn.addEventListener('click', copyFromPreviousWeek);
   const deleteBtn = document.getElementById('delete-week-btn');
   if (deleteBtn) deleteBtn.addEventListener('click', deleteWeek);
+  const printBtn = document.getElementById('print-week-btn');
+  if (printBtn) printBtn.addEventListener('click', printRota);
 }
 
 async function publishWeek() {
@@ -528,6 +531,37 @@ async function copyFromPreviousWeek() {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+function printRota() {
+  const w = weeksById.get(currentWeekId);
+  if (!w) return;
+  const days = Array.from({ length: 7 }, (_, i) => addDays(w.weekStart, i));
+  const shiftDriverIds = new Set(currentShifts.map(s => s.driverId));
+  const rowDrivers = drivers.filter(d => d.active || shiftDriverIds.has(d.id));
+
+  const headCells = days.map((d, i) => `<th>${DAY_LABELS[i]}<br>${fmtDateShort(d)}</th>`).join('');
+
+  const rows = rowDrivers.map(driver => {
+    const cells = days.map(dayStr => {
+      const shifts = currentShifts.filter(s => s.driverId === driver.id && s.date === dayStr)
+        .sort((a, b) => (a.off ? '0' : a.start || '').localeCompare(b.off ? '0' : b.start || ''));
+      const cell = shifts.map(s => `${s.off ? 'OFF' : `${s.start}-${s.end}`}${s.note ? ` (${escapeHtml(s.note)})` : ''}`).join('<br>');
+      return `<td>${cell}</td>`;
+    }).join('');
+    return `<tr><th class="print-driver-col">${escapeHtml(driver.name)}</th>${cells}</tr>`;
+  }).join('');
+
+  document.getElementById('print-area').innerHTML = `
+    <h1>KML Foodservice - Staff Rota</h1>
+    <h2>${fmtRange(w.weekStart)}</h2>
+    <table>
+      <thead><tr><th></th>${headCells}</tr></thead>
+      <tbody>${rows || '<tr><td colspan="8">No drivers</td></tr>'}</tbody>
+    </table>
+    <p class="print-footer">Printed ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+  `;
+  window.print();
 }
 
 // ---------- rota grid ----------
