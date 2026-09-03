@@ -8,7 +8,17 @@ function New-Icon([int]$size, [string]$outPath) {
   $bmp = New-Object System.Drawing.Bitmap($size, $size)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-  $g.Clear($forest)
+
+  $radius = [int]($size * 0.22)
+  $bgPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+  $d = $radius * 2
+  $bgPath.AddArc(0, 0, $d, $d, 180, 90)
+  $bgPath.AddArc($size - $d, 0, $d, $d, 270, 90)
+  $bgPath.AddArc($size - $d, $size - $d, $d, $d, 0, 90)
+  $bgPath.AddArc(0, $size - $d, $d, $d, 90, 90)
+  $bgPath.CloseFigure()
+  $forestBrush = New-Object System.Drawing.SolidBrush($forest)
+  $g.FillPath($forestBrush, $bgPath)
 
   # Safe zone ~66% of icon for maskable icons; clipboard sits centered within it.
   $boardW = $size * 0.44
