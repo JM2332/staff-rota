@@ -765,19 +765,36 @@ async function placeDriver(driverId, runId, date) {
   const driver = drivers.find(d => d.id === driverId);
   const run = runs.find(r => r.id === runId);
   if (!driver || !run) return;
+  const existing = currentAssignments.filter(a => a.runId === runId && a.date === date);
+  if (existing.length === 1 && existing[0].driverId === driverId) return; // already exactly this driver here
+
   const weekRef = db.collection('weeks').doc(currentWeekId);
-  const data = {
+  const batch = db.batch();
+  let netCount = 0;
+  let replacedName = null;
+  existing.forEach(a => {
+    batch.delete(weekRef.collection('assignments').doc(a.id));
+    netCount -= 1;
+    replacedName = a.driverName;
+  });
+  batch.set(weekRef.collection('assignments').doc(), {
     runId, runName: run.name,
     driverId, driverName: driver.name,
     date, start: null, note: '',
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     updatedByRole: currentRole,
-  };
-  await weekRef.collection('assignments').add(data);
-  await weekRef.update({ shiftCount: firebase.firestore.FieldValue.increment(1) });
+  });
+  netCount += 1;
+  batch.update(weekRef, { shiftCount: firebase.firestore.FieldValue.increment(netCount) });
+  await batch.commit();
+
   const w = weeksById.get(currentWeekId);
   if (w && w.status === 'published') {
-    await logAmendment(`Assigned ${driver.name} to ${run.name} - ${fmtDayFull(date)}`);
+    if (replacedName) {
+      await logAmendment(`Swapped ${replacedName} for ${driver.name} on ${run.name} - ${fmtDayFull(date)}`);
+    } else {
+      await logAmendment(`Assigned ${driver.name} to ${run.name} - ${fmtDayFull(date)}`);
+    }
   }
 }
 
@@ -788,17 +805,31 @@ async function moveAssignment(assignId, newRunId, newDate) {
   const run = runs.find(r => r.id === newRunId);
   if (!run) return;
   const weekRef = db.collection('weeks').doc(currentWeekId);
-  const w = weeksById.get(currentWeekId);
   const oldRunName = a.runName, oldDate = a.date;
-  await weekRef.collection('assignments').doc(assignId).update({
+
+  const displaced = currentAssignments.filter(x => x.runId === newRunId && x.date === newDate && x.id !== assignId);
+  const batch = db.batch();
+  let netCount = 0;
+  let replacedName = null;
+  displaced.forEach(x => {
+    batch.delete(weekRef.collection('assignments').doc(x.id));
+    netCount -= 1;
+    replacedName = x.driverName;
+  });
+  batch.update(weekRef.collection('assignments').doc(assignId), {
     runId: newRunId,
     runName: run.name,
     date: newDate,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     updatedByRole: currentRole,
   });
+  if (netCount !== 0) batch.update(weekRef, { shiftCount: firebase.firestore.FieldValue.increment(netCount) });
+  await batch.commit();
+
+  const w = weeksById.get(currentWeekId);
   if (w && w.status === 'published') {
-    await logAmendment(`Moved ${a.driverName} from ${oldRunName} (${fmtDayFull(oldDate)}) to ${run.name} (${fmtDayFull(newDate)})`);
+    const suffix = replacedName ? `, replacing ${replacedName}` : '';
+    await logAmendment(`Moved ${a.driverName} from ${oldRunName} (${fmtDayFull(oldDate)}) to ${run.name} (${fmtDayFull(newDate)})${suffix}`);
   }
 }
 
