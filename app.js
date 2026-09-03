@@ -15,6 +15,7 @@ const db = firebase.firestore();
 const MANAGER_EMAIL = 'manager@kmlfoodservice.internal';
 const ADMIN_EMAIL = 'jacob@kmlfoodservice.internal';
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const STANDARD_RUNS = ['Cannon Hall Farm', 'Sheffield 1', 'Holmfirth', 'Sheffield 2', 'Wakefield'];
 
 // EmailJS - sends the publish notification, no backend required.
 const EMAILJS_SERVICE_ID = 'service_lm99z1l';
@@ -29,14 +30,16 @@ let currentRole = null; // 'manager' | 'admin', set after login
 let booted = false;
 
 let drivers = [];             // [{id, name, active}]
+let runs = [];                 // [{id, name, order, active}]
 let weeksById = new Map();    // weekId -> week doc data
 let currentWeekId = null;
-let currentShifts = [];       // shifts for the open week
+let currentAssignments = [];  // assignments (driver-on-run-on-day) for the open week
 let currentPhotos = [];       // photos for the open week
 let currentAmendments = [];
 let currentPhotoIndex = 0;
+let selectedPoolDriverId = null; // tap-to-place: driver chip currently selected in the pool
 
-let unsubDrivers = null, unsubWeeks = null, unsubShifts = null, unsubAmendments = null, unsubPhotos = null;
+let unsubDrivers = null, unsubRuns = null, unsubWeeks = null, unsubAssignments = null, unsubAmendments = null, unsubPhotos = null;
 
 // ---------- date helpers ----------
 
@@ -144,10 +147,12 @@ auth.onAuthStateChanged(user => {
     loginPasscode.value = '';
     if (!booted) { booted = true; init(); }
     subscribeDrivers();
+    subscribeRuns();
     subscribeWeeks();
   } else {
     loginOverlay.classList.remove('hidden');
     if (unsubDrivers) unsubDrivers();
+    if (unsubRuns) unsubRuns();
     if (unsubWeeks) unsubWeeks();
     closeWeekOverlay();
   }
@@ -232,7 +237,7 @@ function subscribeDrivers() {
   unsubDrivers = db.collection('drivers').orderBy('name').onSnapshot(snap => {
     drivers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderDrivers();
-    if (currentWeekId) renderRotaGrid();
+    if (currentWeekId) { renderRunGrid(); renderDriverPool(); }
   }, err => console.error('drivers snapshot error', err));
 }
 
@@ -281,6 +286,81 @@ document.getElementById('driver-form').addEventListener('submit', async (e) => {
   closeOverlayEl('driver-overlay');
 });
 
+// ---------- runs ----------
+
+function subscribeRuns() {
+  if (unsubRuns) unsubRuns();
+  unsubRuns = db.collection('runs').orderBy('order').onSnapshot(snap => {
+    runs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderRuns();
+    if (currentWeekId) renderRunGrid();
+  }, err => console.error('runs snapshot error', err));
+}
+
+function renderRuns() {
+  const tbody = document.getElementById('runs-tbody');
+  document.getElementById('seed-runs-btn').classList.toggle('hidden', runs.length > 0);
+  if (!runs.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No runs yet. Add your delivery runs to start building rotas.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = runs.map(r => `
+    <tr>
+      <td>${escapeHtml(r.name)}</td>
+      <td>${r.order ?? ''}</td>
+      <td><span class="pill ${r.active ? 'pill-active' : 'pill-inactive'}">${r.active ? 'Active' : 'Inactive'}</span></td>
+      <td><button class="link-btn" data-edit-run="${r.id}">Edit</button></td>
+    </tr>
+  `).join('');
+  tbody.querySelectorAll('[data-edit-run]').forEach(btn => {
+    btn.addEventListener('click', () => openRunModal(runs.find(r => r.id === btn.dataset.editRun)));
+  });
+}
+
+document.getElementById('add-run-btn').addEventListener('click', () => openRunModal(null));
+
+document.getElementById('seed-runs-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('seed-runs-btn');
+  btn.disabled = true;
+  try {
+    const batch = db.batch();
+    STANDARD_RUNS.forEach((name, i) => {
+      const ref = db.collection('runs').doc();
+      batch.set(ref, { name, order: i, active: true, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    });
+    await batch.commit();
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function openRunModal(run) {
+  document.getElementById('run-modal-title').textContent = run ? 'Edit run' : 'Add run';
+  document.getElementById('run-id').value = run ? run.id : '';
+  document.getElementById('run-name').value = run ? run.name : '';
+  document.getElementById('run-order').value = run ? (run.order ?? 0) : runs.length;
+  document.getElementById('run-active').checked = run ? !!run.active : true;
+  openOverlay('run-overlay');
+}
+
+document.getElementById('run-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('run-id').value;
+  const data = {
+    name: document.getElementById('run-name').value.trim(),
+    order: Number(document.getElementById('run-order').value) || 0,
+    active: document.getElementById('run-active').checked,
+  };
+  if (!data.name) return;
+  if (id) {
+    await db.collection('runs').doc(id).update(data);
+  } else {
+    data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+    await db.collection('runs').add(data);
+  }
+  closeOverlayEl('run-overlay');
+});
+
 // ---------- weeks list ----------
 
 function subscribeWeeks() {
@@ -306,7 +386,7 @@ function renderWeeksList() {
         : `<div class="week-card-thumb-empty"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></div>`}
       <div class="week-card-dates">
         <div class="week-card-range">${fmtRange(w.weekStart)}</div>
-        <div class="week-card-meta">${w.shiftCount || 0} shift${(w.shiftCount || 0) === 1 ? '' : 's'} - ${w.photoCount || 0} photo${(w.photoCount || 0) === 1 ? '' : 's'}</div>
+        <div class="week-card-meta">${w.shiftCount || 0} assignment${(w.shiftCount || 0) === 1 ? '' : 's'} - ${w.photoCount || 0} photo${(w.photoCount || 0) === 1 ? '' : 's'}</div>
       </div>
       <span class="pill ${w.status === 'published' ? 'pill-published' : 'pill-draft'}">${w.status === 'published' ? 'Published' : 'Draft'}</span>
     </div>
@@ -352,20 +432,18 @@ document.getElementById('new-rota-form').addEventListener('submit', async (e) =>
 
 function openWeek(weekId) {
   currentWeekId = weekId;
-  currentShifts = [];
+  currentAssignments = [];
   currentPhotos = [];
   currentAmendments = [];
+  selectedPoolDriverId = null;
   renderWeekHeader();
-  renderRotaGrid();
-  renderPhotoStrip();
-  renderAmendments();
   openOverlay('week-overlay');
 
-  if (unsubShifts) unsubShifts();
-  unsubShifts = db.collection('weeks').doc(weekId).collection('shifts').onSnapshot(snap => {
-    currentShifts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    renderRotaGrid();
-  }, err => console.error('shifts snapshot error', err));
+  if (unsubAssignments) unsubAssignments();
+  unsubAssignments = db.collection('weeks').doc(weekId).collection('assignments').onSnapshot(snap => {
+    currentAssignments = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderRunGrid();
+  }, err => console.error('assignments snapshot error', err));
 
   if (unsubPhotos) unsubPhotos();
   unsubPhotos = db.collection('weeks').doc(weekId).collection('photos').orderBy('uploadedAt').onSnapshot(snap => {
@@ -382,10 +460,11 @@ function openWeek(weekId) {
 
 function closeWeekOverlay() {
   closeOverlayEl('week-overlay');
-  if (unsubShifts) { unsubShifts(); unsubShifts = null; }
+  if (unsubAssignments) { unsubAssignments(); unsubAssignments = null; }
   if (unsubPhotos) { unsubPhotos(); unsubPhotos = null; }
   if (unsubAmendments) { unsubAmendments(); unsubAmendments = null; }
   currentWeekId = null;
+  selectedPoolDriverId = null;
 }
 
 function renderWeekHeader() {
@@ -409,16 +488,17 @@ function renderWeekHeader() {
         <button id="delete-week-btn" class="btn-danger"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete rota</button>
       </div>
     </div>
-    ${w.status === 'published' ? '<p class="field-hint" style="margin-bottom:12px;">Click any shift below to amend it - changes are logged automatically.</p>' : ''}
     <div id="week-warnings"></div>
     <div id="week-photo-strip"></div>
+    <div id="week-driver-pool"></div>
     <div id="week-grid-wrap"></div>
     <div id="week-amend-wrap" class="amend-section"></div>
   `;
   el.dataset.weekId = currentWeekId;
   el.innerHTML = headerHtml;
   wireWeekHeaderActions();
-  renderRotaGrid();
+  renderRunGrid();
+  renderDriverPool();
   renderPhotoStrip();
   renderAmendments();
 }
@@ -458,18 +538,20 @@ async function unpublishWeek() {
 async function deleteWeek() {
   const w = weeksById.get(currentWeekId);
   if (!w) return;
-  if (!confirm(`Delete the entire rota for ${fmtRange(w.weekStart)}? This removes all shifts, photos, and amendment history for this week. This can't be undone.`)) return;
+  if (!confirm(`Delete the entire rota for ${fmtRange(w.weekStart)}? This removes all assignments, photos, and amendment history for this week. This can't be undone.`)) return;
   const btn = document.getElementById('delete-week-btn');
   if (btn) btn.disabled = true;
   try {
     const weekRef = db.collection('weeks').doc(currentWeekId);
-    const [shiftsSnap, photosSnap, amendSnap] = await Promise.all([
+    const [shiftsSnap, assignSnap, photosSnap, amendSnap] = await Promise.all([
       weekRef.collection('shifts').get(),
+      weekRef.collection('assignments').get(),
       weekRef.collection('photos').get(),
       weekRef.collection('amendments').get(),
     ]);
     const batch = db.batch();
     shiftsSnap.docs.forEach(d => batch.delete(d.ref));
+    assignSnap.docs.forEach(d => batch.delete(d.ref));
     photosSnap.docs.forEach(d => batch.delete(d.ref));
     amendSnap.docs.forEach(d => batch.delete(d.ref));
     batch.delete(weekRef);
@@ -503,30 +585,31 @@ async function copyFromPreviousWeek() {
   const prevWeekId = addDays(w.weekStart, -7);
   const prevWeek = weeksById.get(prevWeekId);
   if (!prevWeek) return;
-  if (!confirm(`Copy all shifts from the week of ${fmtRange(prevWeekId)} into this week?`)) return;
+  if (!confirm(`Copy all assignments from the week of ${fmtRange(prevWeekId)} into this week?`)) return;
 
   const btn = document.getElementById('copy-prev-week-btn');
   if (btn) btn.disabled = true;
   try {
-    const prevShiftsSnap = await db.collection('weeks').doc(prevWeekId).collection('shifts').get();
-    if (prevShiftsSnap.empty) return;
+    const prevAssignSnap = await db.collection('weeks').doc(prevWeekId).collection('assignments').get();
+    if (prevAssignSnap.empty) return;
     const weekRef = db.collection('weeks').doc(currentWeekId);
     const batch = db.batch();
-    prevShiftsSnap.docs.forEach(doc => {
-      const s = doc.data();
-      const newRef = weekRef.collection('shifts').doc();
+    prevAssignSnap.docs.forEach(doc => {
+      const a = doc.data();
+      const newRef = weekRef.collection('assignments').doc();
       batch.set(newRef, {
-        driverId: s.driverId,
-        date: addDays(s.date, 7),
-        off: !!s.off,
-        start: s.off ? null : (s.start || null),
-        end: s.off ? null : (s.end || null),
-        note: s.note || '',
+        runId: a.runId,
+        runName: a.runName,
+        driverId: a.driverId,
+        driverName: a.driverName,
+        date: addDays(a.date, 7),
+        start: a.start || null,
+        note: a.note || '',
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedByRole: currentRole,
       });
     });
-    batch.update(weekRef, { shiftCount: firebase.firestore.FieldValue.increment(prevShiftsSnap.size) });
+    batch.update(weekRef, { shiftCount: firebase.firestore.FieldValue.increment(prevAssignSnap.size) });
     await batch.commit();
   } finally {
     if (btn) btn.disabled = false;
@@ -537,19 +620,18 @@ function printRota() {
   const w = weeksById.get(currentWeekId);
   if (!w) return;
   const days = Array.from({ length: 7 }, (_, i) => addDays(w.weekStart, i));
-  const shiftDriverIds = new Set(currentShifts.map(s => s.driverId));
-  const rowDrivers = drivers.filter(d => d.active || shiftDriverIds.has(d.id));
+  const assignRunIds = new Set(currentAssignments.map(a => a.runId));
+  const rowRuns = runs.filter(r => r.active || assignRunIds.has(r.id)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   const headCells = days.map((d, i) => `<th>${DAY_LABELS[i]}<br>${fmtDateShort(d)}</th>`).join('');
 
-  const rows = rowDrivers.map(driver => {
+  const rows = rowRuns.map(run => {
     const cells = days.map(dayStr => {
-      const shifts = currentShifts.filter(s => s.driverId === driver.id && s.date === dayStr)
-        .sort((a, b) => (a.off ? '0' : a.start || '').localeCompare(b.off ? '0' : b.start || ''));
-      const cell = shifts.map(s => `${s.off ? 'OFF' : `${s.start}-${s.end}`}${s.note ? ` (${escapeHtml(s.note)})` : ''}`).join('<br>');
+      const assigns = currentAssignments.filter(a => a.runId === run.id && a.date === dayStr);
+      const cell = assigns.map(a => `${escapeHtml(a.driverName)}${a.start ? ` (${a.start})` : ''}${a.note ? ` - ${escapeHtml(a.note)}` : ''}`).join('<br>');
       return `<td>${cell}</td>`;
     }).join('');
-    return `<tr><th class="print-driver-col">${escapeHtml(driver.name)}</th>${cells}</tr>`;
+    return `<tr><th class="print-driver-col">${escapeHtml(run.name)}</th>${cells}</tr>`;
   }).join('');
 
   document.getElementById('print-area').innerHTML = `
@@ -557,52 +639,80 @@ function printRota() {
     <h2>${fmtRange(w.weekStart)}</h2>
     <table>
       <thead><tr><th></th>${headCells}</tr></thead>
-      <tbody>${rows || '<tr><td colspan="8">No drivers</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="8">No runs</td></tr>'}</tbody>
     </table>
     <p class="print-footer">Printed ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
   `;
   window.print();
 }
 
-// ---------- rota grid ----------
+// ---------- driver pool (drag source / tap-to-select) ----------
 
-function renderRotaGrid() {
+function renderDriverPool() {
+  const wrap = document.getElementById('week-driver-pool');
+  if (!wrap) return;
+  const activeDrivers = drivers.filter(d => d.active);
+  if (!activeDrivers.length) {
+    wrap.innerHTML = '<p class="field-hint">No active drivers yet - add drivers first from the Drivers tab.</p>';
+    return;
+  }
+  const selectedName = selectedPoolDriverId ? driverName(selectedPoolDriverId) : null;
+  wrap.innerHTML = `
+    <div class="pool-hint">${selectedName ? `Now tap "+ Assign" on a run/day slot to place <strong>${escapeHtml(selectedName)}</strong> - or tap them again to cancel.` : 'Tap a driver, then tap "+ Assign" on a run/day slot to place them. On desktop you can also drag and drop.'}</div>
+    <div class="driver-pool">
+      ${activeDrivers.map(d => `<div class="driver-chip${selectedPoolDriverId === d.id ? ' selected' : ''}" draggable="true" data-pool-driver="${d.id}">${escapeHtml(d.name)}</div>`).join('')}
+    </div>
+  `;
+  wrap.querySelectorAll('[data-pool-driver]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const id = chip.dataset.poolDriver;
+      selectedPoolDriverId = (selectedPoolDriverId === id) ? null : id;
+      renderDriverPool();
+    });
+    chip.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({ driverId: chip.dataset.poolDriver }));
+    });
+  });
+}
+
+// ---------- run grid ----------
+
+function driverName(id) { const d = drivers.find(x => x.id === id); return d ? d.name : '(unknown driver)'; }
+
+function renderRunGrid() {
   const wrap = document.getElementById('week-grid-wrap');
   if (!wrap || !currentWeekId) return;
   const w = weeksById.get(currentWeekId);
   const weekStart = w ? w.weekStart : currentWeekId;
 
-  const shiftDriverIds = new Set(currentShifts.map(s => s.driverId));
-  const rowDrivers = drivers.filter(d => d.active || shiftDriverIds.has(d.id));
+  const assignRunIds = new Set(currentAssignments.map(a => a.runId));
+  const rowRuns = runs.filter(r => r.active || assignRunIds.has(r.id)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
-  if (!rowDrivers.length) {
-    wrap.innerHTML = '<p class="field-hint">No drivers yet - add drivers first from the Drivers tab, then come back to fill in shifts.</p>';
+  if (!rowRuns.length) {
+    wrap.innerHTML = '<p class="field-hint">No runs yet - add your delivery runs first from the Runs tab, then come back to build the rota.</p>';
+    renderCoverageWarnings();
     return;
   }
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const activeDrivers = drivers.filter(d => d.active);
-  const noCoverageDays = activeDrivers.length
-    ? new Set(days.filter(d => !currentShifts.some(s => s.date === d && !s.off)))
-    : new Set();
 
   let html = '<div class="rota-grid-wrap"><div class="rota-grid">';
-  html += '<div class="rota-head"><div class="rota-driver-cell">Driver</div>';
+  html += '<div class="rota-head"><div class="rota-driver-cell">Run</div>';
   days.forEach((d, i) => {
-    html += `<div class="rota-day-cell${noCoverageDays.has(d) ? ' warn-day' : ''}"><div class="rota-day-name">${DAY_LABELS[i]}</div><div class="rota-day-date">${fmtDateShort(d)}</div></div>`;
+    html += `<div class="rota-day-cell"><div class="rota-day-name">${DAY_LABELS[i]}</div><div class="rota-day-date">${fmtDateShort(d)}</div></div>`;
   });
   html += '</div>';
 
-  rowDrivers.forEach(driver => {
-    html += `<div class="rota-row"><div class="rota-driver-cell">${escapeHtml(driver.name)}${!driver.active ? ' <span class="pill pill-inactive">Inactive</span>' : ''}</div>`;
+  rowRuns.forEach(run => {
+    html += `<div class="rota-row"><div class="rota-driver-cell">${escapeHtml(run.name)}${!run.active ? ' <span class="pill pill-inactive">Inactive</span>' : ''}</div>`;
     days.forEach(dayStr => {
-      const shifts = currentShifts.filter(s => s.driverId === driver.id && s.date === dayStr)
-        .sort((a, b) => (a.off ? '0' : a.start || '').localeCompare(b.off ? '0' : b.start || ''));
-      html += '<div class="rota-day-cell">';
-      shifts.forEach(s => {
-        html += `<div class="shift-chip ${s.off ? 'off' : ''}" data-shift-id="${s.id}">${s.off ? 'OFF' : `${s.start}-${s.end}`}${s.note ? `<span class="shift-note">${escapeHtml(s.note)}</span>` : ''}</div>`;
+      const cellAssignments = currentAssignments.filter(a => a.runId === run.id && a.date === dayStr);
+      const isEmpty = cellAssignments.length === 0 && run.active && w && w.status === 'published';
+      html += `<div class="rota-day-cell run-slot${isEmpty ? ' empty-warn' : ''}" data-run-id="${run.id}" data-date="${dayStr}">`;
+      cellAssignments.forEach(a => {
+        html += `<div class="shift-chip" draggable="true" data-assign-id="${a.id}">${escapeHtml(a.driverName)}${a.start ? `<span class="shift-note">${a.start}</span>` : ''}${a.note ? `<span class="shift-note">${escapeHtml(a.note)}</span>` : ''}</div>`;
       });
-      html += `<button type="button" class="add-shift-btn" data-add-driver="${driver.id}" data-add-date="${dayStr}">+ Add</button>`;
+      html += `<button type="button" class="add-shift-btn" data-place-run="${run.id}" data-place-date="${dayStr}">+ Assign</button>`;
       html += '</div>';
     });
     html += '</div>';
@@ -610,36 +720,103 @@ function renderRotaGrid() {
   html += '</div></div>';
   wrap.innerHTML = html;
 
-  wrap.querySelectorAll('[data-shift-id]').forEach(chip => {
-    chip.addEventListener('click', () => openShiftModal(currentShifts.find(s => s.id === chip.dataset.shiftId)));
+  wrap.querySelectorAll('[data-assign-id]').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAssignModal(currentAssignments.find(a => a.id === chip.dataset.assignId));
+    });
+    chip.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      e.dataTransfer.setData('text/plain', JSON.stringify({ assignId: chip.dataset.assignId }));
+    });
   });
-  wrap.querySelectorAll('[data-add-driver]').forEach(btn => {
-    btn.addEventListener('click', () => openShiftModal(null, btn.dataset.addDriver, btn.dataset.addDate));
+  wrap.querySelectorAll('[data-place-run]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (selectedPoolDriverId) {
+        placeDriver(selectedPoolDriverId, btn.dataset.placeRun, btn.dataset.placeDate);
+        selectedPoolDriverId = null;
+        renderDriverPool();
+      } else {
+        alert('Tap a driver above first, then tap "+ Assign" to place them here.');
+      }
+    });
+  });
+  wrap.querySelectorAll('.run-slot').forEach(cell => {
+    cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('drag-over'); });
+    cell.addEventListener('dragleave', () => cell.classList.remove('drag-over'));
+    cell.addEventListener('drop', (e) => {
+      e.preventDefault();
+      cell.classList.remove('drag-over');
+      let payload;
+      try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (err) { return; }
+      const runId = cell.dataset.runId, date = cell.dataset.date;
+      if (payload.driverId) {
+        placeDriver(payload.driverId, runId, date);
+      } else if (payload.assignId) {
+        moveAssignment(payload.assignId, runId, date);
+      }
+    });
   });
 
   renderCoverageWarnings();
 }
 
+async function placeDriver(driverId, runId, date) {
+  const driver = drivers.find(d => d.id === driverId);
+  const run = runs.find(r => r.id === runId);
+  if (!driver || !run) return;
+  const weekRef = db.collection('weeks').doc(currentWeekId);
+  const data = {
+    runId, runName: run.name,
+    driverId, driverName: driver.name,
+    date, start: null, note: '',
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedByRole: currentRole,
+  };
+  await weekRef.collection('assignments').add(data);
+  await weekRef.update({ shiftCount: firebase.firestore.FieldValue.increment(1) });
+  const w = weeksById.get(currentWeekId);
+  if (w && w.status === 'published') {
+    await logAmendment(`Assigned ${driver.name} to ${run.name} - ${fmtDayFull(date)}`);
+  }
+}
+
+async function moveAssignment(assignId, newRunId, newDate) {
+  const a = currentAssignments.find(x => x.id === assignId);
+  if (!a) return;
+  if (a.runId === newRunId && a.date === newDate) return;
+  const run = runs.find(r => r.id === newRunId);
+  if (!run) return;
+  const weekRef = db.collection('weeks').doc(currentWeekId);
+  const w = weeksById.get(currentWeekId);
+  const oldRunName = a.runName, oldDate = a.date;
+  await weekRef.collection('assignments').doc(assignId).update({
+    runId: newRunId,
+    runName: run.name,
+    date: newDate,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    updatedByRole: currentRole,
+  });
+  if (w && w.status === 'published') {
+    await logAmendment(`Moved ${a.driverName} from ${oldRunName} (${fmtDayFull(oldDate)}) to ${run.name} (${fmtDayFull(newDate)})`);
+  }
+}
+
 function computeCoverageWarnings() {
   const w = weeksById.get(currentWeekId);
   if (!w) return [];
-  const activeDrivers = drivers.filter(d => d.active);
-  if (!activeDrivers.length) return [];
+  if (w.status !== 'published') return []; // still drafting - empty slots are expected, not a problem yet
+  const activeRuns = runs.filter(r => r.active);
+  if (!activeRuns.length) return [];
   const days = Array.from({ length: 7 }, (_, i) => addDays(w.weekStart, i));
   const warnings = [];
   days.forEach(dayStr => {
-    const dayShifts = currentShifts.filter(s => s.date === dayStr && !s.off);
-    if (!dayShifts.length) {
-      warnings.push({ type: 'no-coverage', text: `No driver rostered - ${fmtDayFull(dayStr)}` });
-    }
-    for (let a = 0; a < dayShifts.length; a++) {
-      for (let b = a + 1; b < dayShifts.length; b++) {
-        const s1 = dayShifts[a], s2 = dayShifts[b];
-        if (s1.driverId === s2.driverId && s1.start && s1.end && s2.start && s2.end && s1.start < s2.end && s2.start < s1.end) {
-          warnings.push({ type: 'double-booked', text: `${driverName(s1.driverId)} double-booked - ${fmtDayFull(dayStr)}: ${s1.start}-${s1.end} overlaps ${s2.start}-${s2.end}` });
-        }
+    activeRuns.forEach(run => {
+      const has = currentAssignments.some(a => a.runId === run.id && a.date === dayStr);
+      if (!has) {
+        warnings.push({ text: `${run.name} has no driver assigned - ${fmtDayFull(dayStr)}` });
       }
-    }
+    });
   });
   return warnings;
 }
@@ -648,86 +825,52 @@ function renderCoverageWarnings() {
   const wrap = document.getElementById('week-warnings');
   if (!wrap) return;
   const warnings = computeCoverageWarnings();
-  wrap.innerHTML = warnings.map(w => `<div class="alert ${w.type === 'double-booked' ? 'alert-danger' : 'alert-warn'}">${escapeHtml(w.text)}</div>`).join('');
+  wrap.innerHTML = warnings.map(w => `<div class="alert alert-warn">${escapeHtml(w.text)}</div>`).join('');
 }
 
-function driverName(id) { const d = drivers.find(x => x.id === id); return d ? d.name : '(unknown driver)'; }
-function shiftLabel(s) { return s.off ? 'OFF' : `${s.start}-${s.end}`; }
+// ---------- assignment edit modal ----------
 
-function openShiftModal(shift, driverId, dateStr) {
-  const editing = !!shift;
-  document.getElementById('shift-modal-title').textContent = editing ? 'Edit shift' : 'Add shift';
-  document.getElementById('shift-id').value = editing ? shift.id : '';
-  document.getElementById('shift-driver-id').value = editing ? shift.driverId : driverId;
-  document.getElementById('shift-date').value = editing ? shift.date : dateStr;
-  const dId = editing ? shift.driverId : driverId;
-  const dStr = editing ? shift.date : dateStr;
-  document.getElementById('shift-context').textContent = `${driverName(dId)} - ${fmtDayFull(dStr)}`;
-  document.getElementById('shift-off').checked = editing ? !!shift.off : false;
-  document.getElementById('shift-start').value = editing && shift.start ? shift.start : '08:00';
-  document.getElementById('shift-end').value = editing && shift.end ? shift.end : '16:00';
-  document.getElementById('shift-note').value = editing ? (shift.note || '') : '';
-  document.getElementById('shift-delete-btn').classList.toggle('hidden', !editing);
-  toggleShiftTimeFields();
-  openOverlay('shift-overlay');
+function openAssignModal(assignment) {
+  if (!assignment) return;
+  document.getElementById('assign-id').value = assignment.id;
+  document.getElementById('assign-context').textContent = `${assignment.driverName} - ${assignment.runName} - ${fmtDayFull(assignment.date)}`;
+  document.getElementById('assign-start').value = assignment.start || '';
+  document.getElementById('assign-note').value = assignment.note || '';
+  openOverlay('assign-overlay');
 }
 
-document.getElementById('shift-off').addEventListener('change', toggleShiftTimeFields);
-function toggleShiftTimeFields() {
-  document.getElementById('shift-time-fields').classList.toggle('hidden', document.getElementById('shift-off').checked);
-}
-
-document.getElementById('shift-form').addEventListener('submit', async (e) => {
+document.getElementById('assign-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const id = document.getElementById('shift-id').value;
-  const driverId = document.getElementById('shift-driver-id').value;
-  const date = document.getElementById('shift-date').value;
-  const off = document.getElementById('shift-off').checked;
+  const id = document.getElementById('assign-id').value;
+  if (!id) return;
+  const prev = currentAssignments.find(a => a.id === id);
   const data = {
-    driverId,
-    date,
-    off,
-    start: off ? null : document.getElementById('shift-start').value,
-    end: off ? null : document.getElementById('shift-end').value,
-    note: document.getElementById('shift-note').value.trim(),
+    start: document.getElementById('assign-start').value || null,
+    note: document.getElementById('assign-note').value.trim(),
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     updatedByRole: currentRole,
   };
-  const w = weeksById.get(currentWeekId);
-  const published = w && w.status === 'published';
   const weekRef = db.collection('weeks').doc(currentWeekId);
-  const dName = driverName(driverId);
-  const dayLabel = fmtDayFull(date);
-
-  if (id) {
-    const prev = currentShifts.find(s => s.id === id);
-    await weekRef.collection('shifts').doc(id).update(data);
-    if (published && prev) {
-      await logAmendment(`Amended ${dName} - ${dayLabel}: ${shiftLabel(prev)} -> ${shiftLabel(data)}`);
-    }
-  } else {
-    await weekRef.collection('shifts').add(data);
-    await weekRef.update({ shiftCount: firebase.firestore.FieldValue.increment(1) });
-    if (published) {
-      await logAmendment(`Added shift for ${dName} - ${dayLabel}: ${shiftLabel(data)}`);
-    }
+  await weekRef.collection('assignments').doc(id).update(data);
+  const w = weeksById.get(currentWeekId);
+  if (w && w.status === 'published' && prev) {
+    await logAmendment(`Updated ${prev.driverName} on ${prev.runName} - ${fmtDayFull(prev.date)}${data.start ? ` (start ${data.start})` : ''}`);
   }
-  closeOverlayEl('shift-overlay');
+  closeOverlayEl('assign-overlay');
 });
 
-document.getElementById('shift-delete-btn').addEventListener('click', async () => {
-  const id = document.getElementById('shift-id').value;
+document.getElementById('assign-delete-btn').addEventListener('click', async () => {
+  const id = document.getElementById('assign-id').value;
   if (!id) return;
-  const prev = currentShifts.find(s => s.id === id);
-  const w = weeksById.get(currentWeekId);
-  const published = w && w.status === 'published';
+  const prev = currentAssignments.find(a => a.id === id);
   const weekRef = db.collection('weeks').doc(currentWeekId);
-  await weekRef.collection('shifts').doc(id).delete();
+  await weekRef.collection('assignments').doc(id).delete();
   await weekRef.update({ shiftCount: firebase.firestore.FieldValue.increment(-1) });
-  if (published && prev) {
-    await logAmendment(`Removed shift for ${driverName(prev.driverId)} - ${fmtDayFull(prev.date)} (was ${shiftLabel(prev)})`);
+  const w = weeksById.get(currentWeekId);
+  if (w && w.status === 'published' && prev) {
+    await logAmendment(`Removed ${prev.driverName} from ${prev.runName} - ${fmtDayFull(prev.date)}`);
   }
-  closeOverlayEl('shift-overlay');
+  closeOverlayEl('assign-overlay');
 });
 
 async function logAmendment(text) {

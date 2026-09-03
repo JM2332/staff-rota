@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="KML Rota">
-<link rel="stylesheet" href="style.css?v=202608241800">
+<link rel="stylesheet" href="style.css?v=202608250900">
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
@@ -42,6 +42,7 @@
   </div>
   <nav id="tabs">
     <button class="tab-btn active" data-tab="rotas"><svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg><span>Rotas</span></button>
+    <button class="tab-btn" data-tab="runs"><svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l6-7 4 5 4-4 4 9"/><circle cx="20" cy="19" r="2.2"/><circle cx="4" cy="19" r="2.2"/><path d="M6.2 19h11.6"/></svg><span>Runs</span></button>
     <button class="tab-btn" data-tab="drivers"><svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="9" width="14" height="8" rx="1.5"/><path d="M15 12h4l3 3v2h-7"/><circle cx="6" cy="19" r="2"/><circle cx="17" cy="19" r="2"/></svg><span>Drivers</span></button>
   </nav>
   <div id="role-badge-wrap">
@@ -64,6 +65,30 @@
       </div>
     </div>
     <div id="weeks-list"></div>
+  </section>
+
+  <!-- RUNS -->
+  <section id="tab-runs" class="tab-panel">
+    <div class="panel-header">
+      <h2>Runs</h2>
+      <div class="panel-actions">
+        <button id="seed-runs-btn" class="btn-outline hidden"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Add the 5 standard runs</button>
+        <button id="add-run-btn" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Add run</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="runs-table">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Order</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="runs-tbody"></tbody>
+      </table>
+    </div>
   </section>
 
   <!-- DRIVERS -->
@@ -107,7 +132,7 @@
           <option value="4">4 weeks</option>
         </select>
       </label>
-      <p class="field-hint">This creates a draft rota for each week. You'll be taken straight into the first one to attach a photo and fill in shifts.</p>
+      <p class="field-hint">This creates a draft rota for each week. You'll be taken straight into the first one to attach a photo and build the rota.</p>
       <div class="modal-actions">
         <button type="submit" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Create</button>
       </div>
@@ -123,34 +148,47 @@
   </div>
 </div>
 
-<!-- Shift edit overlay -->
-<div id="shift-overlay" class="overlay hidden">
+<!-- Assignment edit overlay -->
+<div id="assign-overlay" class="overlay hidden">
   <div class="overlay-panel">
-    <button class="modal-close" data-close="shift-overlay">&times;</button>
-    <h2 id="shift-modal-title">Shift</h2>
-    <form id="shift-form">
-      <input type="hidden" id="shift-id">
-      <input type="hidden" id="shift-driver-id">
-      <input type="hidden" id="shift-date">
-      <div id="shift-context" class="shift-context"></div>
-      <label class="checkbox-row">
-        <input type="checkbox" id="shift-off">
-        Day off / not working
+    <button class="modal-close" data-close="assign-overlay">&times;</button>
+    <h2>Assignment</h2>
+    <div id="assign-context" class="shift-context"></div>
+    <form id="assign-form">
+      <input type="hidden" id="assign-id">
+      <label>Start time (optional)
+        <input type="time" id="assign-start">
       </label>
-      <div id="shift-time-fields">
-        <label>Start time
-          <input type="time" id="shift-start" value="08:00">
-        </label>
-        <label>End time
-          <input type="time" id="shift-end" value="16:00">
-        </label>
-      </div>
       <label>Note (optional)
-        <input type="text" id="shift-note" placeholder="e.g. covering for Dave">
+        <input type="text" id="assign-note" placeholder="e.g. covering usual driver">
       </label>
       <div class="modal-actions">
         <button type="submit" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Save</button>
-        <button type="button" id="shift-delete-btn" class="btn-danger hidden"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete</button>
+        <button type="button" id="assign-delete-btn" class="btn-danger"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Remove from run</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Run edit overlay -->
+<div id="run-overlay" class="overlay hidden">
+  <div class="overlay-panel">
+    <button class="modal-close" data-close="run-overlay">&times;</button>
+    <h2 id="run-modal-title">Add run</h2>
+    <form id="run-form">
+      <input type="hidden" id="run-id">
+      <label>Run name
+        <input type="text" id="run-name" required>
+      </label>
+      <label>Display order
+        <input type="number" id="run-order" min="0" step="1">
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" id="run-active" checked>
+        Active
+      </label>
+      <div class="modal-actions">
+        <button type="submit" class="btn-primary"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>Save</button>
       </div>
     </form>
   </div>
@@ -221,7 +259,7 @@
 <!-- Print area - hidden on screen, shown only by @media print. Populated by printRota(). -->
 <div id="print-area"></div>
 
-<script src="app.js?v=202608241800"></script>
-<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=202608241800');</script>
+<script src="app.js?v=202608250900"></script>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=202608250900');</script>
 </body>
 </html>
