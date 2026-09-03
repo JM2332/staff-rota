@@ -658,7 +658,7 @@ function renderDriverPool() {
   }
   const selectedName = selectedPoolDriverId ? driverName(selectedPoolDriverId) : null;
   wrap.innerHTML = `
-    <div class="pool-hint">${selectedName ? `Now tap "+ Assign" on a run/day slot to place <strong>${escapeHtml(selectedName)}</strong> - or tap them again to cancel.` : 'Tap a driver, then tap "+ Assign" on a run/day slot to place them. On desktop you can also drag and drop.'}</div>
+    <div class="pool-hint">${selectedName ? `Now tap an empty "+ Assign" slot, or tap a driver already on a run to swap them for <strong>${escapeHtml(selectedName)}</strong> - or tap ${escapeHtml(selectedName)} again to cancel.` : 'Tap a driver, then tap a run/day slot to place or swap them in. On desktop you can also drag and drop.'}</div>
     <div class="driver-pool">
       ${activeDrivers.map(d => `<div class="driver-chip${selectedPoolDriverId === d.id ? ' selected' : ''}" draggable="true" data-pool-driver="${d.id}">${escapeHtml(d.name)}</div>`).join('')}
     </div>
@@ -712,7 +712,9 @@ function renderRunGrid() {
       cellAssignments.forEach(a => {
         html += `<div class="shift-chip" draggable="true" data-assign-id="${a.id}">${escapeHtml(a.driverName)}${a.start ? `<span class="shift-note">${a.start}</span>` : ''}${a.note ? `<span class="shift-note">${escapeHtml(a.note)}</span>` : ''}</div>`;
       });
-      html += `<button type="button" class="add-shift-btn" data-place-run="${run.id}" data-place-date="${dayStr}">+ Assign</button>`;
+      if (!cellAssignments.length) {
+        html += `<button type="button" class="add-shift-btn" data-place-run="${run.id}" data-place-date="${dayStr}">+ Assign</button>`;
+      }
       html += '</div>';
     });
     html += '</div>';
@@ -723,7 +725,14 @@ function renderRunGrid() {
   wrap.querySelectorAll('[data-assign-id]').forEach(chip => {
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      openAssignModal(currentAssignments.find(a => a.id === chip.dataset.assignId));
+      const assignment = currentAssignments.find(a => a.id === chip.dataset.assignId);
+      if (selectedPoolDriverId) {
+        placeDriver(selectedPoolDriverId, assignment.runId, assignment.date);
+        selectedPoolDriverId = null;
+        renderDriverPool();
+      } else {
+        openAssignModal(assignment);
+      }
     });
     chip.addEventListener('dragstart', (e) => {
       e.stopPropagation();
