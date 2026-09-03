@@ -339,15 +339,16 @@ tbody tr:hover { background: var(--bg-hover); }
 }
 .modal-close:hover { background: var(--bg-hover); color: var(--text); }
 
-#new-rota-form, #shift-form, #driver-form, #passcode-form { display: flex; flex-direction: column; gap: 13px; }
-#new-rota-form label, #shift-form label, #driver-form label, #passcode-form label {
+#new-rota-form, #assign-form, #driver-form, #passcode-form, #run-form { display: flex; flex-direction: column; gap: 13px; }
+#new-rota-form label, #assign-form label, #driver-form label, #passcode-form label, #run-form label {
   display: flex; flex-direction: column; gap: 5px; font-size: 11px; font-weight: 600;
   color: var(--muted); text-transform: uppercase; letter-spacing: .03em;
 }
 #new-rota-form input, #new-rota-form select,
-#shift-form input, #shift-form select,
+#assign-form input, #assign-form select,
 #driver-form input,
-#passcode-form input {
+#passcode-form input,
+#run-form input {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -357,9 +358,10 @@ tbody tr:hover { background: var(--bg-hover); }
   color: var(--text);
 }
 #new-rota-form input:focus, #new-rota-form select:focus,
-#shift-form input:focus, #shift-form select:focus,
+#assign-form input:focus, #assign-form select:focus,
 #driver-form input:focus,
-#passcode-form input:focus {
+#passcode-form input:focus,
+#run-form input:focus {
   outline: none;
   border-color: var(--sage);
   box-shadow: 0 0 0 3px rgba(122, 139, 94, .18);
@@ -367,8 +369,6 @@ tbody tr:hover { background: var(--bg-hover); }
 .field-hint { margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 .modal-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
 
-#shift-time-fields { display: flex; gap: 10px; }
-#shift-time-fields.hidden { display: none; }
 .shift-context { font-size: 13px; font-weight: 600; color: var(--brand); margin-bottom: 2px; }
 
 /* ---------- login gate ---------- */
@@ -646,7 +646,6 @@ tbody tr:hover { background: var(--bg-hover); }
   }
   #role-badge { text-align: center; }
   .rota-panel { padding: 18px 14px 22px; }
-  #shift-time-fields { flex-direction: column; }
 }
 
 /* ---------- print ---------- */
